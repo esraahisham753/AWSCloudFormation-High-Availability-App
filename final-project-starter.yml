@@ -1,0 +1,467 @@
+Parameters:
+  # Paramenters are entirely optional.
+  # but using them will make your cloudformation templates more reusable
+  # use them for things that may change over time, such as instance type,
+  # VPCs and so on.
+  EnvironmentName:
+    Type: String
+    Description: "The name that will be prefixed to all stack resources"
+  VpcCidrBlock: 
+    Type: String
+    Description: "The Ip range that will be used for our VPC"
+  PrivateSubnet1Cidr:
+    Type: String
+    Description: "The Ip range that will be used for our first private subnet"
+  PrivateSubnet2Cidr:
+    Type: String
+    Description: "The Ip range that will be used for our second private subnet"
+  PublicSubnet1Cidr:
+    Type: String
+    Description: "The Ip range that will be used for our first public subnet"
+  PublicSubnet2Cidr:
+    Type: String
+    Description: "The Ip range that will be used for our second public subnet"
+  ImageId:
+    Description: "The image that will be used for our auto scaling group instances"
+    Type: String
+    Default: "ami-0729e439b6769d6ab"
+  InstanceType: 
+    Description: "The auto scaling group instance size"
+    Type: String
+    Default: "t2.medium"
+Resources:
+  # instace profile contains the IAM Role name(s) that we want to associate to our auto scaling EC2 Servers
+  # never give too much permissions to your EC2 instances! if they get hacked, the permissions get hacked also!
+  # in this example, I create a Role called UdacityS3ReadOnlyC2 and just give it a policy of S3 Read-Only Access
+  
+  #Network Infrastructure
+  MainVpc:
+    Type: AWS::EC2::VPC
+    Properties: 
+      CidrBlock: !Ref VpcCidrBlock
+      Tags: 
+        - Key: "Name"
+          Value: !Sub ${EnvironmentName}-VPC
+  #Subnets
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties: 
+      AvailabilityZone: !Select [0, !GetAZs 'us-east-1']
+      CidrBlock: !Ref PrivateSubnet1Cidr
+      MapPublicIpOnLaunch: false
+      Tags: 
+        - Key: "Name"
+          Value: ${EnvironmentName}-PRIV-SUB1
+      VpcId: !Ref MainVpc
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties: 
+      AvailabilityZone: !Select [1, !GetAZs 'us-east-1']
+      CidrBlock: !Ref PrivateSubnet2Cidr
+      MapPublicIpOnLaunch: false
+      Tags: 
+        - Key: "Name"
+          Value: ${EnvironmentName}-PRIV-SUB2
+      VpcId: !Ref MainVpc
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties: 
+      AvailabilityZone: !Select [0, !GetAZs 'us-east-1']
+      CidrBlock: !Ref PublicSubnet1Cidr
+      MapPublicIpOnLaunch: true
+      Tags: 
+        - Key: "Name"
+          Value: ${EnvironmentName}-Pub-SUB1
+      VpcId: !Ref MainVpc
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties: 
+      AvailabilityZone: !Select [1, !GetAZs 'us-east-1']
+      CidrBlock: !Ref PublicSubnet2Cidr
+      MapPublicIpOnLaunch: true
+      Tags: 
+        - Key: "Name"
+          Value: ${EnvironmentName}-Pub-SUB2
+      VpcId: !Ref MainVpc
+  #Elastic ips
+  ElasticIp1:
+    Type: AWS::EC2::EIP
+    Properties: 
+      Tags: 
+        - Key: "Name"
+          Value: ${EnvironmentName}-EIP1
+  ElasticIp2:
+    Type: AWS::EC2::EIP
+    Properties: 
+      Tags: 
+        - Key: "Name"
+          Value: ${EnvironmentName}-EIP2
+  #NAT gatways
+  NAT1:
+    Type: AWS::EC2::NatGateway
+    Properties: 
+      AllocationId: !GetAtt ElasticIp1.AllocationId
+      SubnetId: !Ref PublicSubnet1
+      Tags: 
+        - Key: "Name"
+          Value: ${EnvironmentName}-NAT1
+  NAT2:
+    Type: AWS::EC2::NatGateway
+    Properties: 
+      AllocationId: !GetAtt ElasticIp2.AllocationId
+      SubnetId: !Ref PublicSubnet2
+      Tags: 
+        - Key: "Name"
+          Value: ${EnvironmentName}-NAT2
+  #Internet gateway
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties: 
+      Tags: 
+        - Key: "Name"
+          Value: ${EnvironmentName}-IG
+  IgVpcAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties: 
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref MainVpc
+  #Route tables
+  #Route table1
+  PrivRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties: 
+      Tags: 
+        - Key: "Name"
+          Value: ${EnvironmentName}-PRIV-ROUTE-TABLE1
+      VpcId: !Ref MainVpc
+  PrivTableAssociation1: 
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: 
+      RouteTableId: !Ref PrivRouteTable1
+      SubnetId: !Ref PrivateSubnet1
+  PrivRoute1:
+    Type: AWS::EC2::Route
+    DependsOn: NAT1
+    Properties: 
+      DestinationCidrBlock: "0.0.0.0/0"
+      NatGatewayId: !Ref NAT1
+      RouteTableId: !Ref PrivRouteTable1
+  #Route table2
+  PrivRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties: 
+      Tags: 
+        - Key: "Name"
+          Value: ${EnvironmentName}-PRIV-ROUTE-TABLE2
+      VpcId: !Ref MainVpc
+  PrivTableAssociation2: 
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: 
+      RouteTableId: !Ref PrivRouteTable2
+      SubnetId: !Ref PrivateSubnet2
+  PrivRoute2:
+    Type: AWS::EC2::Route
+    DependsOn: NAT2
+    Properties: 
+      DestinationCidrBlock: "0.0.0.0/0"
+      NatGatewayId: !Ref NAT2
+      RouteTableId: !Ref PrivRouteTable2
+  #Route table3
+  PubRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties: 
+      Tags: 
+        - Key: "Name"
+          Value: ${EnvironmentName}-PUB-ROUTE-TABLE1
+      VpcId: !Ref MainVpc
+  PubTableAssociation1: 
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: 
+      RouteTableId: !Ref PubRouteTable1
+      SubnetId: !Ref PublicSubnet1
+  PubRoute1:
+    Type: AWS::EC2::Route
+    DependsOn: IgVpcAttachment
+    Properties: 
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref InternetGateway
+      RouteTableId: !Ref PubRouteTable1
+  #Route table4
+  PubRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties: 
+      Tags: 
+        - Key: "Name"
+          Value: ${EnvironmentName}-PUB-ROUTE-TABLE2
+      VpcId: !Ref MainVpc
+  PubTableAssociation1: 
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: 
+      RouteTableId: !Ref PubRouteTable2
+      SubnetId: !Ref PublicSubnet2
+  PubRoute1:
+    Type: AWS::EC2::Route
+    DependsOn: IgVpcAttachment
+    Properties: 
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref InternetGateway
+      RouteTableId: !Ref PubRouteTable2
+  #######################################################################################################################
+  #Compute resources
+  #Bastion Host
+  BastionSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: "Allow the tcp access to the Bastion host from my ip only"
+      GroupName: "BastionHostSecurityGroup"
+      SecurityGroupIngress: 
+        - CidrIp: "197.33.32.252/32"
+          FromPort: 22
+          IpProtocol: tcp
+          ToPort: 22
+      Tags: 
+        - Key: "Name"
+          Value: !Sub ${EnvironmentName}-BH-SG
+      VpcId: !Ref MainVpc
+  BastionHost:
+    Type: AWS::EC2::Instance
+    Properties: 
+      ImageId: "ami-0cff7528ff583bf9a"
+      InstanceType: "t2.micro"
+      KeyName: udgram
+      SecurityGroupIds: 
+        - !Ref BastionSG
+      SubnetId: !Ref PublicSubnet1
+      Tags: 
+        - Key: "Name"
+          Value: !Sub ${EnvironmentName}-BH
+  #Instance profile
+  UdacityS3ReadOnlyEC2:
+    Type: AWS::IAM::Role
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns: 
+        - "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"
+      RoleName: "UdacityS3ReadOnlyEC2"
+      Tags: 
+        - Key: "Name"
+          Value: !Sub ${EnvironmentName}-S3-READONLY-ROLE
+  ProfileWithRolesForOurApp:
+    Type: AWS::IAM::InstanceProfile
+    Properties: 
+      Roles:
+        - UdacityS3ReadOnlyEC2
+  #Load balancer Security Group
+  LBSecGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: "Allow the tcp access to the load balancer"
+      GroupName: "LoadBalancerSecurityGroup"
+      SecurityGroupIngress: 
+        - CidrIp: "0.0.0.0/0"
+          FromPort: 80
+          IpProtocol: tcp
+          ToPort: 80
+      SecurityGroupEgress: 
+        - CidrIp: "0.0.0.0/0"
+          FromPort: 80
+          IpProtocol: tcp
+          ToPort: 80
+      Tags: 
+        - Key: "Name"
+          Value: !Sub ${EnvironmentName}-LB-SG
+      VpcId: !Ref MainVpc
+  #Launch Configuration
+  ASSecurityGroup:
+    DependsOn: LBSecGroup
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: "Allow the http access and ssh access to auto scaling group instances"
+      GroupName: "AutoScalingSecurityGroup"
+      SecurityGroupIngress: 
+        - SourceSecurityGroupId: !Ref LBSecGroup
+          FromPort: 80
+          IpProtocol: tcp
+          ToPort: 80
+        - SourceSecurityGroupId: !Ref BastionSG
+          FromPort: 22
+          IpProtocol: tcp
+          ToPort: 22
+      SecurityGroupEgress:
+        - CidrIp: "0.0.0.0/0"
+          IpProtocol: tcp
+          FromPort: 0
+          ToPort: 65535
+      Tags: 
+        - Key: "Name"
+          Value: !Sub ${EnvironmentName}-AS-SG
+      VpcId: !Ref MainVpc
+  ASLaunchConfig:
+    DependsOn: ASSecurityGroup
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties: 
+      AssociatePublicIpAddress: false
+      IamInstanceProfile: !Ref ProfileWithRolesForOurApp
+      ImageId: !Ref ImageId
+      InstanceType: !Ref InstanceType
+      LaunchConfigurationName: "HighAVWebAbbUdgram"
+      BlockDeviceMappings:
+        - DeviceName: "/dev/sdk"
+          Ebs: 
+            VolumeSize: '10'
+      SecurityGroups: 
+        - !Ref ASSecurityGroup
+      UserData: 
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          apt-get update -y
+          apt-get install apache2 -y
+          systemctl start apache2.service
+          echo "it works! Udagram, Udacity" > /var/www/html/index.html
+  #Autoscaling Group
+  AutoscalingTarget:
+    DependsOn: ASLaunchConfig
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties: 
+      HealthCheckIntervalSeconds: 10
+      HealthCheckPath: /
+      HealthCheckPort: "80"
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 8
+      HealthyThresholdCount: 2
+      Name: "ASTG"
+      Port: 80
+      Protocol: HTTP
+      Tags: 
+        - Key: "Name"
+          Value: !Sub ${EnvironmentName}-AS-TG
+      UnhealthyThresholdCount: 5
+      VpcId: !Ref MainVpc
+  UdgramAutoScaling:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties: 
+      AutoScalingGroupName: "UdgramAutoScaling"
+      LaunchConfigurationName: !Ref ASLaunchConfig
+      MaxSize: "5"
+      MinSize: "1"
+      TargetGroupARNs:
+        - !Ref AutoscalingTarget
+      VPCZoneIdentifier: 
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+  #Load Balancer
+  # LoadBalancerLogBucket:
+  #   Type: AWS::S3::Bucket
+  #   Properties: 
+  #     BucketName: "my-492835712949-bucket"
+  #     Tags: 
+  #       - Key: "Name"
+  #         Value: !Sub ${EnvironmentName}-LB-LOGS-S3
+  # LogsBucketPolicy:
+  #   DependsOn: LoadBalancerLogBucket
+  #   Type: AWS::S3::BucketPolicy
+  #   Properties: 
+  #     Bucket: "my-492835712949-bucket"
+  #     PolicyDocument: 
+  #       Version: 2012-10-17
+  #       Statement:
+  #         - Action:
+  #             - "s3:PutObject"
+  #           Effect: Allow
+  #           Resource: "arn:aws:s3:::my-492835712949-bucket/esload/AWSLogs/492835712949/*"
+  #           Principal: 
+  #             AWS: 
+  #               - "arn:aws:iam::127311923021:root"
+  MainLoadBalancer:
+    DependsOn: IgVpcAttachment    
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties: 
+      Name: "UdgramLB"
+      SecurityGroups: 
+        - !Ref LBSecGroup
+      Subnets: 
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      # LoadBalancerAttributes:
+      #   - Key: "access_logs.s3.enabled"
+      #     Value: true
+      #   - Key: "access_logs.s3.bucket"
+      #     Value: "my-492835712949-bucket"
+      #   - Key: "access_logs.s3.prefix"
+      #     Value: "esload"
+      Tags: 
+        - Key: "Name"
+          Value: !Sub ${EnvironmentName}-LB
+      Type: "application"
+  LBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties: 
+      DefaultActions: 
+        - TargetGroupArn: !Ref AutoscalingTarget
+          Type: forward 
+      LoadBalancerArn: !Ref MainLoadBalancer
+      Port: '80'
+      Protocol: HTTP
+  LBListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties: 
+      Actions: 
+        - TargetGroupArn: !Ref AutoscalingTarget
+          Type: forward
+      Conditions: 
+        - Field: path-pattern
+          Values: [/]
+      ListenerArn: !Ref LBListener
+      Priority: 1
+
+###########################################################################################################################      
+Outputs:
+  VpcId:
+    Description: "The id for our main vpc"
+    Value: !Ref MainVpc
+    Export:
+      Name: !Sub ${EnvironmentName}-VPC-ID
+  PrivateSubnets:
+    Description: "List of private subnets' ids"
+    Value: !Join [',',[!Ref PrivateSubnet1, !Ref PrivateSubnet2]]
+    Export:
+      Name: !Sub ${EnvironmentName}-PRIV-SUBS-IDS
+  PublicSubnets:
+    Description: "List of public subnets' ids"
+    Value: !Join [',', [!Ref PublicSubnet1, !Ref PublicSubnet2]]
+    Export:
+      Name: !Sub ${EnvironmentName}-PUB-SUBS-IDS
+  LoadBalancerUrl:
+    Description: "The main url to test our app"
+    Value: !GetAtt MainLoadBalancer.DNSName
+    Export:
+      Name: !Sub ${EnvironmentName}-LB-URL
+  LoadBalancerARN:
+    Description: "The ARN for our load balancer"
+    Value: !Ref MainLoadBalancer
+    Export:
+      Name: !Sub ${EnvironmentName}-LB-ARN
+  BastionHostId:
+    Description: "The instance id for our Bastion Host"
+    Value: !Sub ${EnvironmentName}-BH-ID
+  # This is also optional.
+  # Bonus points for useful outputs!
+  # for example, if you create a Load Balancer
+  # it's nice to output the URL to it here, so that we don't have to go to the console to get it.
+
+# Sample UserData
+# When creating your Launch Configuration, you may need a UserData script
+# here's one that you can use for Ubuntu Linux that will:
+# Install Apache Web Server, Start it, and create an index.html that will be displayed
+# when you visit the IP address of this server with your web browser
+#Here it is:
+#
+         
